@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events'
+
 export interface ToolDefinition<T = any> {
   name: string
   description?: string
@@ -72,21 +74,21 @@ export class DesktopGuardrails {
   sanitize<T>(value: T): T
 }
 
-export class SocketServer {
+export class SocketServer extends EventEmitter {
   constructor(options?: { appName?: string; socketPath?: string })
   start(): Promise<string>
   broadcast(message: any): void
   stop(): Promise<void>
 }
 
-export class SocketClient {
+export class SocketClient extends EventEmitter {
   constructor(options?: { appName?: string; socketPath?: string })
   connect(): Promise<void>
   send(message: any): void
   close(): void
 }
 
-export class StdioServer {
+export class StdioServer extends EventEmitter {
   constructor(options?: { input?: any; output?: any })
   start(): void
   stop(): void
