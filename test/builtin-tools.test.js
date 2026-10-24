@@ -13,6 +13,15 @@ describe('Universal Builtin Electron Tools', () => {
     isCrashed: () => false,
     executeJavaScript: async (expr) => {
       if (expr.includes('2 + 2')) return 4
+      if (expr.includes('new MouseEvent')) {
+        return { success: true, element: { tag: 'button', testId: 'cull-accept-btn', text: 'Accept (P)', bounds: { x: 10, y: 10, w: 100, h: 32 } } }
+      }
+      if (expr.includes('new Event(\'input\'')) {
+        return { success: true, value: 'test search', tag: 'input', testId: 'search-input' }
+      }
+      if (expr.includes('popstate') || expr.includes('window.location.hash')) {
+        return { navigated: true, url: 'app://index.html#/cull', hash: '#/cull', pathname: '/cull' }
+      }
       if (expr.includes('querySelectorAll')) {
         return {
           title: 'ShotSelect - Grid View',
@@ -57,7 +66,12 @@ describe('Universal Builtin Electron Tools', () => {
     getSummary: () => ({
       slowChannels: [{ channel: 'io:heavy', p95Ms: 42 }],
       stallsCount: 0,
+      stalls: 0,
+      worstStallMs: 0,
     }),
+    getAdvice: () => [
+      { level: 'warning', title: 'Batch IPC calls', advice: 'Consider batching requests' }
+    ],
   }
 
   const guardrails = new DesktopGuardrails()
@@ -217,5 +231,44 @@ describe('Universal Builtin Electron Tools', () => {
     const tool = getTool('app:assert_performance_budgets')
     const result = await tool.handler({ maxStalls: 2, maxIpcMs: 100 })
     assert.strictEqual(typeof result.passed, 'boolean')
+  })
+
+  test('app:get_health_report returns unified health status and memory', async () => {
+    const tool = getTool('app:get_health_report')
+    const result = await tool.handler()
+    assert.strictEqual(result.app.name, 'ShotSelect')
+    assert.strictEqual(result.status, 'HEALTHY')
+    assert.strictEqual(result.eventLoop.stalls, 0)
+    assert.ok(result.memory.rssMb >= 0)
+    assert.strictEqual(result.activeWindow.id, 1)
+    assert.ok(Array.isArray(result.advice))
+  })
+
+  test('app:get_performance_advice returns smart optimization advice', async () => {
+    const tool = getTool('app:get_performance_advice')
+    const result = await tool.handler()
+    assert.ok(result.count >= 1)
+    assert.strictEqual(result.advice[0].title, 'Batch IPC calls')
+  })
+
+  test('app:click_element simulates element click in renderer', async () => {
+    const tool = getTool('app:click_element')
+    const result = await tool.handler({ testId: 'cull-accept-btn' })
+    assert.strictEqual(result.success, true)
+    assert.strictEqual(result.element.testId, 'cull-accept-btn')
+  })
+
+  test('app:type_text simulates text input in renderer', async () => {
+    const tool = getTool('app:type_text')
+    const result = await tool.handler({ selector: '#search', text: 'test search' })
+    assert.strictEqual(result.success, true)
+    assert.strictEqual(result.value, 'test search')
+  })
+
+  test('app:navigate_route triggers route change in window', async () => {
+    const tool = getTool('app:navigate_route')
+    const result = await tool.handler({ route: '#/cull' })
+    assert.strictEqual(result.navigated, true)
+    assert.strictEqual(result.hash, '#/cull')
   })
 })
