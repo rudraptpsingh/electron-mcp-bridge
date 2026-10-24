@@ -1,0 +1,56 @@
+{
+  "name": "electron-mcp-bridge",
+  "version": "0.1.0",
+  "description": "In-process Model Context Protocol (MCP) server and agent bridge for Electron desktop applications",
+  "main": "./src/index.cjs",
+  "module": "./src/index.mjs",
+  "types": "./index.d.ts",
+  "bin": {
+    "electron-mcp-bridge": "./bin/cli.cjs"
+  },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./src/index.mjs",
+      "require": "./src/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "bin",
+    "index.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "lint": "node -e \"console.log('No linter configured, pure zero-dep Node.js')\""
+  },
+  "keywords": [
+    "electron",
+    "mcp",
+    "model-context-protocol",
+    "ai-agent",
+    "claude-desktop",
+    "cursor",
+    "antigravity",
+    "testing",
+    "diagnostics",
+    "automation",
+    "desktop"
+  ],
+  "author": "Rudra Pratap Singh",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rudraptpsingh/electron-mcp-bridge.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rudraptpsingh/electron-mcp-bridge/issues"
+  },
+  "homepage": "https://github.com/rudraptpsingh/electron-mcp-bridge#readme"
+}
