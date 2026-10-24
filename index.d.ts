@@ -43,6 +43,7 @@ export interface SetupMcpBridgeOptions {
 export interface McpBridgeInstance {
   server: any
   guardrails: any
+  diagnosticsBuffer: any
   socketServer: any
   stdioServer: any
   registerTool: (tool: ToolDefinition) => void

@@ -4,6 +4,7 @@ const { McpServer } = require('./server.cjs')
 const { DesktopGuardrails } = require('./guardrails.cjs')
 const { SocketServer, StdioServer, getSocketPath } = require('./transport.cjs')
 const { createBuiltinTools } = require('./builtin-tools.cjs')
+const { DiagnosticsBuffer } = require('./diagnostics-buffer.cjs')
 
 /**
  * Single-call setup function that turns any Electron application into an MCP Server.
@@ -44,9 +45,30 @@ function setupMcpBridge(options = {}) {
     blockedChannels,
   })
 
+  const diagnosticsBuffer = new DiagnosticsBuffer({ guardrails })
+
+  // Hook process error events for triaging
+  const onUncaught = (err) => {
+    diagnosticsBuffer.recordError({
+      type: 'uncaughtException',
+      message: err ? err.message : 'Unknown uncaughtException',
+      stack: err ? err.stack : undefined,
+    })
+  }
+  const onUnhandled = (reason) => {
+    diagnosticsBuffer.recordError({
+      type: 'unhandledRejection',
+      message: reason instanceof Error ? reason.message : String(reason),
+      stack: reason instanceof Error ? reason.stack : undefined,
+    })
+  }
+
+  process.on('uncaughtException', onUncaught)
+  process.on('unhandledRejection', onUnhandled)
+
   const server = new McpServer({
     name: `${appName}-mcp-bridge`,
-    version: '0.1.0',
+    version: '0.2.0',
     guardrails,
   })
 
@@ -56,6 +78,7 @@ function setupMcpBridge(options = {}) {
     BrowserWindow,
     ipcMain,
     guardrails,
+    diagnosticsBuffer,
     getWorkflowObserver:
       getWorkflowObserver ||
       (() => {
@@ -121,6 +144,7 @@ function setupMcpBridge(options = {}) {
   const bridge = {
     server,
     guardrails,
+    diagnosticsBuffer,
     socketServer,
     stdioServer,
     registerTool: (tool) => server.registerTool(tool),
@@ -128,6 +152,8 @@ function setupMcpBridge(options = {}) {
     registerResource: (res) => server.registerResource(res),
     handleMessage: (msg) => server.handleMessage(msg),
     stop: async () => {
+      process.removeListener('uncaughtException', onUncaught)
+      process.removeListener('unhandledRejection', onUnhandled)
       if (socketServer) await socketServer.stop()
       if (stdioServer) stdioServer.stop()
     },

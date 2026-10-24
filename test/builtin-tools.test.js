@@ -4,12 +4,26 @@ const { test, describe } = require('node:test')
 const assert = require('node:assert')
 const { createBuiltinTools } = require('../src/builtin-tools.cjs')
 const { DesktopGuardrails } = require('../src/guardrails.cjs')
+const { DiagnosticsBuffer } = require('../src/diagnostics-buffer.cjs')
 
 describe('Universal Builtin Electron Tools', () => {
   const mockWebContents = {
     getURL: () => 'app://index.html#/grid',
+    isLoading: () => false,
+    isCrashed: () => false,
     executeJavaScript: async (expr) => {
       if (expr.includes('2 + 2')) return 4
+      if (expr.includes('querySelectorAll')) {
+        return {
+          title: 'ShotSelect - Grid View',
+          location: 'app://index.html#/grid',
+          totalInteractiveElements: 2,
+          elements: [
+            { tag: 'button', testId: 'cull-accept-btn', text: 'Accept (P)', bounds: { x: 10, y: 10, w: 100, h: 32 } },
+            { tag: 'button', testId: 'cull-reject-btn', text: 'Reject (X)', bounds: { x: 120, y: 10, w: 100, h: 32 } },
+          ],
+        }
+      }
       return { route: 'grid', count: 120 }
     },
     capturePage: async () => ({
@@ -47,12 +61,20 @@ describe('Universal Builtin Electron Tools', () => {
   }
 
   const guardrails = new DesktopGuardrails()
+  const diagnosticsBuffer = new DiagnosticsBuffer({ guardrails })
+  diagnosticsBuffer.recordError({ type: 'warning', message: 'Test warning message' })
 
   const tools = createBuiltinTools({
-    app: { getName: () => 'ShotSelect' },
+    app: {
+      getName: () => 'ShotSelect',
+      getVersion: () => '1.18.21',
+      getLocale: () => 'en-US',
+      isPackaged: false,
+    },
     BrowserWindow: mockBrowserWindow,
     ipcMain: mockIpcMain,
     guardrails,
+    diagnosticsBuffer,
     getWorkflowObserver: () => mockObserver,
   })
 
@@ -61,6 +83,15 @@ describe('Universal Builtin Electron Tools', () => {
     assert.ok(t, `Tool ${name} must be present`)
     return t
   }
+
+  test('app:get_app_info returns platform and runtime versions', async () => {
+    const tool = getTool('app:get_app_info')
+    const result = await tool.handler()
+    assert.strictEqual(result.appName, 'ShotSelect')
+    assert.strictEqual(result.version, '1.18.21')
+    assert.ok(result.pid > 0)
+    assert.ok(result.platform.length > 0)
+  })
 
   test('app:list_windows returns window state and bounds', async () => {
     const tool = getTool('app:list_windows')
@@ -71,19 +102,66 @@ describe('Universal Builtin Electron Tools', () => {
     assert.strictEqual(result.windows[0].url, 'app://index.html#/grid')
   })
 
-  test('app:inspect_ipc lists registered channels', async () => {
+  test('app:inspect_ipc lists registered channels and activity', async () => {
     const tool = getTool('app:inspect_ipc')
     const result = await tool.handler({ filter: 'catalog' })
-    assert.strictEqual(result.total, 2)
+    assert.strictEqual(result.totalRegistered, 2)
     assert.ok(result.channels.some((c) => c.channel === 'catalog:getPhotos'))
   })
 
-  test('app:invoke_ipc executes main process handler', async () => {
+  test('app:inspect_ipc_channel returns single channel deep-dive', async () => {
+    const tool = getTool('app:inspect_ipc_channel')
+    const result = await tool.handler({ channel: 'catalog:getPhotos' })
+    assert.strictEqual(result.channel, 'catalog:getPhotos')
+    assert.strictEqual(result.isRegistered, true)
+    assert.strictEqual(result.handlerType, 'handle')
+  })
+
+  test('app:invoke_ipc executes main process handler and records latency', async () => {
     const tool = getTool('app:invoke_ipc')
     const result = await tool.handler({ channel: 'catalog:setRating', args: ['photo_99', 4] })
     assert.strictEqual(result.ok, true)
     assert.strictEqual(result.photoId, 'photo_99')
     assert.strictEqual(result.rating, 4)
+
+    // Check that diagnosticsBuffer recorded it
+    const stats = diagnosticsBuffer.getChannelStats('catalog:setRating')
+    assert.strictEqual(stats.length, 1)
+    assert.strictEqual(stats[0].invocations, 1)
+  })
+
+  test('app:get_ui_tree returns semantic interactive elements from renderer', async () => {
+    const tool = getTool('app:get_ui_tree')
+    const result = await tool.handler()
+    assert.strictEqual(result.title, 'ShotSelect - Grid View')
+    assert.strictEqual(result.totalInteractiveElements, 2)
+    assert.strictEqual(result.elements[0].testId, 'cull-accept-btn')
+  })
+
+  test('app:get_error_logs returns buffered errors and warnings', async () => {
+    const tool = getTool('app:get_error_logs')
+    const result = await tool.handler()
+    assert.strictEqual(result.totalErrors, 1)
+    assert.strictEqual(result.errors[0].type, 'warning')
+    assert.strictEqual(result.errors[0].message, 'Test warning message')
+  })
+
+  test('app:get_performance_profile returns V8 heap and observer metrics', async () => {
+    const tool = getTool('app:get_performance_profile')
+    const result = await tool.handler()
+    assert.ok(result.memoryRssMb >= 0)
+    assert.ok(result.v8Heap.totalHeapMb >= 0)
+    assert.strictEqual(result.workflowObserver.stallsCount, 0)
+  })
+
+  test('app:benchmark_ipc benchmarks channel over multiple runs', async () => {
+    const tool = getTool('app:benchmark_ipc')
+    const result = await tool.handler({ channel: 'catalog:getPhotos', iterations: 5 })
+    assert.strictEqual(result.iterations, 5)
+    assert.strictEqual(result.successfulRuns, 5)
+    assert.strictEqual(result.failures, 0)
+    assert.ok(result.latencyMs.mean >= 0)
+    assert.strictEqual(result.stallDetected, false)
   })
 
   test('app:eval_renderer runs JavaScript in target window', async () => {
