@@ -1,6 +1,6 @@
 {
   "name": "electron-mcp-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "In-process Model Context Protocol (MCP) server and agent bridge for Electron desktop applications",
   "main": "./src/index.cjs",
   "module": "./src/index.mjs",
