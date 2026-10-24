@@ -25,6 +25,7 @@ function setupMcpBridge(options = {}) {
     transport = 'socket',
     socketPath,
     getWorkflowObserver,
+    getAppVitals,
   } = options
 
   // Attempt to resolve BrowserWindow if not provided
@@ -84,6 +85,14 @@ function setupMcpBridge(options = {}) {
       (() => {
         if (typeof globalThis !== 'undefined' && globalThis.__ELECTRON_WORKFLOW_OBSERVER__) {
           return globalThis.__ELECTRON_WORKFLOW_OBSERVER__
+        }
+        return null
+      }),
+    getAppVitals:
+      getAppVitals ||
+      (() => {
+        if (typeof globalThis !== 'undefined' && globalThis.__APP_VITALS__) {
+          return globalThis.__APP_VITALS__
         }
         return null
       }),

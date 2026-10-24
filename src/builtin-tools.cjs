@@ -6,7 +6,7 @@ const { createImageContent } = require('./protocol.cjs')
  * Creates the set of universal Electron tools for triaging, analysis, and benchmarking.
  */
 function createBuiltinTools(context) {
-  const { app, BrowserWindow, ipcMain, guardrails, getWorkflowObserver, diagnosticsBuffer } = context
+  const { app, BrowserWindow, ipcMain, guardrails, getWorkflowObserver, getAppVitals, diagnosticsBuffer } = context
 
   return [
     {
@@ -659,14 +659,22 @@ function createBuiltinTools(context) {
           }
         }
 
+        let coreVitals = null
+        if (typeof getAppVitals === 'function') {
+          const vitals = getAppVitals()
+          if (vitals && typeof vitals.getSummary === 'function') {
+            coreVitals = vitals.getSummary()
+          }
+        }
+
         let activeHandles = 0
         let activeRequests = 0
         if (typeof process._getActiveHandles === 'function') activeHandles = process._getActiveHandles().length
         if (typeof process._getActiveRequests === 'function') activeRequests = process._getActiveRequests().length
         const threadPoolSize = Number(process.env.UV_THREADPOOL_SIZE) || 4
 
-        const stalls = observerSummary?.stalls || 0
-        const worstStallMs = observerSummary?.worstStallMs || 0
+        const stalls = observerSummary?.stalls || (coreVitals?.vitals?.EST?.totalStalls) || 0
+        const worstStallMs = observerSummary?.worstStallMs || (coreVitals?.vitals?.EST?.worstMs) || 0
 
         return {
           app: {
@@ -700,6 +708,7 @@ function createBuiltinTools(context) {
             url: focusedWin.webContents && typeof focusedWin.webContents.getURL === 'function' ? focusedWin.webContents.getURL() : null,
           } : null,
           workflowObserver: observerSummary || { status: 'not-active' },
+          coreVitals: coreVitals || { status: 'not-active' },
           advice: advice.length > 0 ? advice : (observerSummary?.advice || []),
           lastError: diagnosticsBuffer && diagnosticsBuffer.errors.length > 0 ? diagnosticsBuffer.errors[diagnosticsBuffer.errors.length - 1] : null,
         }
@@ -724,6 +733,43 @@ function createBuiltinTools(context) {
           count: advice.length,
           advice,
         }
+      },
+    },
+
+    {
+      name: 'app:get_core_vitals',
+      description: 'Fetch real-time Desktop Core Vitals (EST event loop stalls, IRL IPC latency, TTFP, MBR memory bloat, and FDC frame drops)',
+      schema: { type: 'object', properties: {} },
+      tier: 'query',
+      handler: async () => {
+        if (typeof getAppVitals === 'function') {
+          const v = getAppVitals()
+          if (v && typeof v.getSummary === 'function') return v.getSummary()
+        }
+        return { status: 'not-active', error: 'app-vitals not initialized' }
+      },
+    },
+
+    {
+      name: 'app:assert_core_vitals_budgets',
+      description: 'Evaluate declarative SLA performance budgets against recorded Desktop Core Vitals in CI or automated agent evaluations',
+      schema: {
+        type: 'object',
+        properties: {
+          maxEstMs: { type: 'number', description: 'Max allowed event-loop stall duration in ms (default: 50)' },
+          maxIrlMs: { type: 'number', description: 'Max allowed p95 IPC latency in ms (default: 25)' },
+          maxTtfpMs: { type: 'number', description: 'Max allowed time to first pixels in ms (default: 800)' },
+          maxMbrRatio: { type: 'number', description: 'Max allowed memory bloat ratio (default: 2.0)' },
+          maxFdcPercent: { type: 'number', description: 'Max allowed frame drop percentage (default: 2.0)' },
+        },
+      },
+      tier: 'query',
+      handler: async (budgets = {}) => {
+        if (typeof getAppVitals === 'function') {
+          const v = getAppVitals()
+          if (v && typeof v.assertBudgets === 'function') return v.assertBudgets(budgets)
+        }
+        return { passed: false, error: 'app-vitals not initialized', violations: ['app-vitals not initialized'] }
       },
     },
 

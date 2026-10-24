@@ -90,6 +90,20 @@ describe('Universal Builtin Electron Tools', () => {
     guardrails,
     diagnosticsBuffer,
     getWorkflowObserver: () => mockObserver,
+    getAppVitals: () => ({
+      getSummary: () => ({
+        vitals: {
+          EST: { worstMs: 0, rating: 'good', totalStalls: 0 },
+          IRL: { p95Ms: 1.2, rating: 'good' },
+          TTFP: { valueMs: 150, rating: 'good' },
+          MBR: { ratio: 1.8, rating: 'good' },
+          FDC: { dropRatePercent: 0, rating: 'good' },
+        },
+        overallScore: 'good',
+        isNativeEngine: true,
+      }),
+      assertBudgets: (b) => ({ passed: true, violations: [] }),
+    }),
   })
 
   function getTool(name) {
@@ -242,6 +256,7 @@ describe('Universal Builtin Electron Tools', () => {
     assert.ok(result.memory.rssMb >= 0)
     assert.strictEqual(result.activeWindow.id, 1)
     assert.ok(Array.isArray(result.advice))
+    assert.strictEqual(result.coreVitals.overallScore, 'good')
   })
 
   test('app:get_performance_advice returns smart optimization advice', async () => {
@@ -249,6 +264,21 @@ describe('Universal Builtin Electron Tools', () => {
     const result = await tool.handler()
     assert.ok(result.count >= 1)
     assert.strictEqual(result.advice[0].title, 'Batch IPC calls')
+  })
+
+  test('app:get_core_vitals returns Desktop Core Vitals', async () => {
+    const tool = getTool('app:get_core_vitals')
+    const result = await tool.handler()
+    assert.strictEqual(result.overallScore, 'good')
+    assert.strictEqual(result.isNativeEngine, true)
+    assert.strictEqual(result.vitals.EST.worstMs, 0)
+  })
+
+  test('app:assert_core_vitals_budgets evaluates SLA budgets', async () => {
+    const tool = getTool('app:assert_core_vitals_budgets')
+    const result = await tool.handler({ maxEstMs: 50 })
+    assert.strictEqual(result.passed, true)
+    assert.strictEqual(result.violations.length, 0)
   })
 
   test('app:click_element simulates element click in renderer', async () => {
