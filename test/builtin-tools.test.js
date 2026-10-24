@@ -186,4 +186,36 @@ describe('Universal Builtin Electron Tools', () => {
     assert.strictEqual(result.workflowObserver.stallsCount, 0)
     assert.strictEqual(result.workflowObserver.slowChannels[0].channel, 'io:heavy')
   })
+
+  test('app:trace_event_loop_stalls returns stall diagnostics and thresholds', async () => {
+    const tool = getTool('app:trace_event_loop_stalls')
+    const result = await tool.handler({ thresholdMs: 40 })
+    assert.strictEqual(result.thresholdMs, 40)
+    assert.strictEqual(typeof result.stallCount, 'number')
+    assert.ok(Array.isArray(result.stalls))
+  })
+
+  test('app:inspect_io_queue returns libuv thread pool and handle metrics', async () => {
+    const tool = getTool('app:inspect_io_queue')
+    const result = await tool.handler()
+    assert.ok(result.uvThreadPoolSize > 0)
+    assert.strictEqual(typeof result.activeHandles, 'number')
+    assert.strictEqual(typeof result.activeRequests, 'number')
+    assert.ok(['normal', 'saturated'].includes(result.concurrencyStatus))
+  })
+
+  test('app:inspect_memory_breakdown returns process and V8 heap statistics', async () => {
+    const tool = getTool('app:inspect_memory_breakdown')
+    const result = await tool.handler()
+    assert.ok(result.processMemory.rssMb >= 0)
+    assert.ok(result.processMemory.heapUsedMb >= 0)
+    assert.ok(result.v8HeapStatistics.totalHeapSizeMb >= 0)
+    assert.strictEqual(result.windows.openWindowsCount, 1)
+  })
+
+  test('app:assert_performance_budgets evaluates declarative budgets', async () => {
+    const tool = getTool('app:assert_performance_budgets')
+    const result = await tool.handler({ maxStalls: 2, maxIpcMs: 100 })
+    assert.strictEqual(typeof result.passed, 'boolean')
+  })
 })

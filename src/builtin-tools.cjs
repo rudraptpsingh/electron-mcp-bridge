@@ -467,7 +467,7 @@ function createBuiltinTools(context) {
           }
         }
 
-        return {
+          return {
           process: {
             pid: process.pid,
             uptimeSeconds: Math.round(uptime),
@@ -481,6 +481,157 @@ function createBuiltinTools(context) {
             cpu,
           },
           workflowObserver: observerMetrics || { status: 'not-active' },
+        }
+      },
+    },
+
+    {
+      name: 'app:trace_event_loop_stalls',
+      description: 'Trace and diagnose main-process event-loop stalls, freeze durations, and active blocker handlers',
+      schema: {
+        type: 'object',
+        properties: {
+          thresholdMs: { type: 'number', description: 'Stall duration threshold in ms (default: 50)' },
+        },
+      },
+      tier: 'query',
+      handler: async (params = {}) => {
+        const threshold = params.thresholdMs || 50
+        let stalls = []
+        if (typeof getWorkflowObserver === 'function') {
+          const obs = getWorkflowObserver()
+          if (obs && Array.isArray(obs.events)) {
+            stalls = obs.events
+              .filter((e) => e.kind === 'main-stall' && (!threshold || e.stallMs >= threshold))
+              .map((e) => ({
+                stallMs: e.stallMs,
+                topBlocker: e.topBlocker || 'main-thread-busy',
+                blockerCount: e.blockerCount || 1,
+                time: e.monotonicMs,
+              }))
+          }
+        }
+        return {
+          thresholdMs: threshold,
+          stallCount: stalls.length,
+          worstStallMs: stalls.length > 0 ? Math.max(...stalls.map((s) => s.stallMs)) : 0,
+          stalls: stalls.slice(-20),
+        }
+      },
+    },
+
+    {
+      name: 'app:inspect_io_queue',
+      description: 'Inspect main-process libuv thread pool, pending I/O tasks, and active handle counts',
+      schema: { type: 'object', properties: {} },
+      tier: 'query',
+      handler: async () => {
+        let activeHandles = 0
+        let activeRequests = 0
+        if (typeof process._getActiveHandles === 'function') {
+          activeHandles = process._getActiveHandles().length
+        }
+        if (typeof process._getActiveRequests === 'function') {
+          activeRequests = process._getActiveRequests().length
+        }
+        const threadPoolSize = Number(process.env.UV_THREADPOOL_SIZE) || 4
+
+        return {
+          uvThreadPoolSize: threadPoolSize,
+          activeHandles,
+          activeRequests,
+          concurrencyStatus: activeRequests >= threadPoolSize ? 'saturated' : 'normal',
+        }
+      },
+    },
+
+    {
+      name: 'app:inspect_memory_breakdown',
+      description: 'Inspect detailed V8 heap statistics, external ArrayBuffers, process RSS, and open window count',
+      schema: { type: 'object', properties: {} },
+      tier: 'query',
+      handler: async () => {
+        const v8 = require('node:v8')
+        const heapStats = typeof v8.getHeapStatistics === 'function' ? v8.getHeapStatistics() : {}
+        const memory = process.memoryUsage ? process.memoryUsage() : {}
+        const windows = BrowserWindow && typeof BrowserWindow.getAllWindows === 'function' ? BrowserWindow.getAllWindows() : []
+
+        return {
+          processMemory: {
+            rssMb: Number(((memory.rss || 0) / (1024 * 1024)).toFixed(2)),
+            heapUsedMb: Number(((memory.heapUsed || 0) / (1024 * 1024)).toFixed(2)),
+            heapTotalMb: Number(((memory.heapTotal || 0) / (1024 * 1024)).toFixed(2)),
+            externalMb: Number(((memory.external || 0) / (1024 * 1024)).toFixed(2)),
+            arrayBuffersMb: Number(((memory.arrayBuffers || 0) / (1024 * 1024)).toFixed(2)),
+          },
+          v8HeapStatistics: {
+            totalHeapSizeMb: Number(((heapStats.total_heap_size || 0) / (1024 * 1024)).toFixed(2)),
+            usedHeapSizeMb: Number(((heapStats.used_heap_size || 0) / (1024 * 1024)).toFixed(2)),
+            heapSizeLimitMb: Number(((heapStats.heap_size_limit || 0) / (1024 * 1024)).toFixed(2)),
+            mallocedMemoryMb: Number(((heapStats.malloced_memory || 0) / (1024 * 1024)).toFixed(2)),
+          },
+          windows: {
+            openWindowsCount: windows.length,
+          },
+        }
+      },
+    },
+
+    {
+      name: 'app:assert_performance_budgets',
+      description: 'Assert declarative performance budgets against active workflow observer traces (max stalls, IPC budgets)',
+      schema: {
+        type: 'object',
+        properties: {
+          maxStalls: { type: 'number', description: 'Maximum event-loop stalls allowed' },
+          maxStallMs: { type: 'number', description: 'Maximum event-loop stall duration in ms' },
+          maxIpcMs: { type: 'number', description: 'Global maximum IPC duration in ms' },
+          maxFailures: { type: 'number', description: 'Maximum allowed failed IPC calls' },
+          channelBudgets: { type: 'object', description: 'Map of channel -> { maxMs, maxFailures }' },
+        },
+      },
+      tier: 'query',
+      handler: async (budgets = {}) => {
+        if (typeof getWorkflowObserver !== 'function') {
+          return { passed: true, note: 'workflow-observer not configured' }
+        }
+        const obs = getWorkflowObserver()
+        if (!obs || !Array.isArray(obs.events)) {
+          return { passed: true, note: 'no active workflow events recorded' }
+        }
+        if (typeof obs.assertBudgets === 'function') {
+          return obs.assertBudgets(budgets)
+        }
+        const events = obs.events
+        const violations = []
+        let stalls = 0
+        let worstStallMs = 0
+        let failures = 0
+        for (const e of events) {
+          if (e.kind === 'main-stall') {
+            stalls++
+            if (e.stallMs > worstStallMs) worstStallMs = e.stallMs
+            if (budgets.maxStallMs && e.stallMs > budgets.maxStallMs) {
+              violations.push(`Stall ${e.stallMs}ms exceeded budget ${budgets.maxStallMs}ms`)
+            }
+          }
+          if (e.kind === 'ipc-handle') {
+            if (!e.ok) failures++
+            if (budgets.maxIpcMs && e.durationMs > budgets.maxIpcMs) {
+              violations.push(`Channel '${e.channel}' took ${e.durationMs}ms (budget: ${budgets.maxIpcMs}ms)`)
+            }
+          }
+        }
+        if (budgets.maxStalls != null && stalls > budgets.maxStalls) {
+          violations.push(`Total stalls ${stalls} exceeded budget ${budgets.maxStalls}`)
+        }
+        if (budgets.maxFailures != null && failures > budgets.maxFailures) {
+          violations.push(`Total failures ${failures} exceeded budget ${budgets.maxFailures}`)
+        }
+        return {
+          passed: violations.length === 0,
+          violations,
+          summary: { totalEvents: events.length, stalls, worstStallMs, failures },
         }
       },
     },
